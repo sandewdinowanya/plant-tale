@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { FaEnvelope, FaLock, FaUser, FaGoogle } from 'react-icons/fa';
+import { signUpWithEmail } from '../firebase/auth';
 
 interface SignupForm {
   name: string;
@@ -13,20 +15,107 @@ interface SignupForm {
 }
 
 const Signup = () => {
+  const router = useRouter();
   const [form, setForm] = useState<SignupForm>({
     name: '',
     email: '',
     password: '',
     confirmPassword: '',
   });
+  const [error, setError] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
+    setError(''); // Clear error when user types
   };
 
-  const handleSignup = (e: React.FormEvent<HTMLFormElement>) => {
+  const validateForm = (): boolean => {
+    if (!form.name || !form.email || !form.password || !form.confirmPassword) {
+      setError('All fields are required');
+      return false;
+    }
+
+    if (form.password !== form.confirmPassword) {
+      setError('Passwords do not match');
+      return false;
+    }
+
+    if (form.password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return false;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(form.email)) {
+      setError('Please enter a valid email address');
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSignup = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    console.log('Signup with:', form.email);
+
+    if (!validateForm()) return;
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await signUpWithEmail(form.email, form.password, form.name);
+      
+      // Redirect to dashboard after successful signup
+      router.push('/dashboard');
+    } catch (err: any) {
+      console.error('Signup error:', err);
+      
+      // Handle Firebase-specific errors
+      if (err.code === 'auth/email-already-in-use') {
+        setError('This email is already registered');
+      } else if (err.code === 'auth/weak-password') {
+        setError('Password is too weak');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Invalid email address');
+      } else {
+        setError('Failed to create account. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignup = async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const authModule = await import('../firebase/auth');
+      const googleSignupFn = ('signInWithGoogle' in authModule ? authModule['signInWithGoogle'] : null) as
+        | (() => Promise<unknown>)
+        | null;
+
+      if (typeof googleSignupFn !== 'function') {
+        setError('Google sign-up is not configured yet.');
+        return;
+      }
+
+      await googleSignupFn();
+      router.push('/dashboard');
+    } catch (err: any) {
+      console.error('Google signup error:', err);
+      
+      if (err.code === 'auth/popup-closed-by-user') {
+        setError('Sign-up cancelled');
+      } else if (err.code === 'auth/popup-blocked') {
+        setError('Popup blocked. Please allow popups for this site.');
+      } else {
+        setError('Failed to sign up with Google. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -44,6 +133,13 @@ const Signup = () => {
           <p className="text-text-light text-base">Start your green journey today.</p>
         </div>
 
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-4 text-sm">
+            {error}
+          </div>
+        )}
+
         <form className="flex flex-col gap-5" onSubmit={handleSignup}>
           {/* Name */}
           <div className="flex flex-col gap-2">
@@ -57,8 +153,9 @@ const Signup = () => {
               placeholder="Enter your full name"
               value={form.name}
               onChange={handleChange}
+              disabled={loading}
               required
-              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -74,8 +171,9 @@ const Signup = () => {
               placeholder="Enter your email"
               value={form.email}
               onChange={handleChange}
+              disabled={loading}
               required
-              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -91,8 +189,9 @@ const Signup = () => {
               placeholder="Create a password"
               value={form.password}
               onChange={handleChange}
+              disabled={loading}
               required
-              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -108,16 +207,18 @@ const Signup = () => {
               placeholder="Confirm your password"
               value={form.confirmPassword}
               onChange={handleChange}
+              disabled={loading}
               required
-              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
 
           <button
             type="submit"
-            className="bg-primary text-white border-none rounded-lg py-3.5 text-base font-semibold cursor-pointer transition-all duration-300 mt-4 hover:bg-green-dark active:translate-y-0.5"
+            disabled={loading}
+            className="bg-primary text-white border-none rounded-lg py-3.5 text-base font-semibold cursor-pointer transition-all duration-300 mt-4 hover:bg-green-dark active:translate-y-0.5 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            Create Account
+            {loading ? 'Creating Account...' : 'Create Account'}
           </button>
         </form>
 
@@ -130,7 +231,12 @@ const Signup = () => {
 
         {/* Social */}
         <div className="flex gap-4 mb-6">
-          <button className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border border-gray-300 bg-white font-medium cursor-pointer transition-colors duration-300 hover:bg-gray-100">
+          <button
+            type="button"
+            onClick={handleGoogleSignup}
+            disabled={loading}
+            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border border-gray-300 bg-white font-medium cursor-pointer transition-colors duration-300 hover:bg-gray-100 disabled:bg-gray-100 disabled:cursor-not-allowed"
+          >
             <FaGoogle /> Google
           </button>
         </div>

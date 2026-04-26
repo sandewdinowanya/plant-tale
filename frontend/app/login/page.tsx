@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { FaEnvelope, FaLock, FaGoogle } from 'react-icons/fa';
+import { signInWithEmail } from '../firebase/auth';
 
 interface LoginForm {
   email: string;
@@ -11,16 +13,88 @@ interface LoginForm {
 }
 
 const Login = () => {
+  const router = useRouter();
   const [form, setForm] = useState<LoginForm>({ email: '', password: '' });
   const [rememberMe, setRememberMe] = useState(false);
+  const [error, setError] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
+    setError('');
   };
 
-  const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    console.log('Login with:', form.email);
+
+    if (!form.email || !form.password) {
+      setError('Please enter both email and password');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await signInWithEmail(form.email, form.password);
+      
+      // Redirect to dashboard after successful login
+      router.push('/dashboard');
+    } catch (err: any) {
+      console.error('Login error:', err);
+      
+      // Handle Firebase-specific errors
+      if (err.code === 'auth/user-not-found') {
+        setError('No account found with this email');
+      } else if (err.code === 'auth/wrong-password') {
+        setError('Incorrect password');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Invalid email address');
+      } else if (err.code === 'auth/invalid-credential') {
+        setError('Invalid email or password');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Please try again later.');
+      } else {
+        setError('Failed to login. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithGoogleSafely = async () => {
+    const authModule = await import('../firebase/auth');
+    const googleSignIn = (authModule as any).signInWithGoogle;
+
+    if (typeof googleSignIn !== 'function') {
+      throw { code: 'auth/google-not-configured' };
+    }
+
+    return googleSignIn();
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      await signInWithGoogleSafely();
+      router.push('/dashboard');
+    } catch (err: any) {
+      console.error('Google login error:', err);
+      
+      if (err.code === 'auth/popup-closed-by-user') {
+        setError('Login cancelled');
+      } else if (err.code === 'auth/popup-blocked') {
+        setError('Popup blocked. Please allow popups for this site.');
+      } else if (err.code === 'auth/google-not-configured') {
+        setError('Google login is not configured yet.');
+      } else {
+        setError('Failed to login with Google. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -38,6 +112,13 @@ const Login = () => {
           <p className="text-text-light text-base">Let&apos;s take care of your garden together.</p>
         </div>
 
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-4 text-sm">
+            {error}
+          </div>
+        )}
+
         <form className="flex flex-col gap-5" onSubmit={handleLogin}>
           {/* Email */}
           <div className="flex flex-col gap-2">
@@ -51,8 +132,9 @@ const Login = () => {
               placeholder="Enter your email"
               value={form.email}
               onChange={handleChange}
+              disabled={loading}
               required
-              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -68,8 +150,9 @@ const Login = () => {
               placeholder="Enter your password"
               value={form.password}
               onChange={handleChange}
+              disabled={loading}
               required
-              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              className="px-4 py-3 border border-gray-300 rounded-lg text-base transition-all duration-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -81,6 +164,7 @@ const Login = () => {
                 id="remember"
                 checked={rememberMe}
                 onChange={() => setRememberMe(!rememberMe)}
+                disabled={loading}
                 className="accent-primary"
               />
               <label htmlFor="remember" className="text-text-dark">Remember me</label>
@@ -92,9 +176,10 @@ const Login = () => {
 
           <button
             type="submit"
-            className="bg-primary text-white border-none rounded-lg py-3.5 text-base font-semibold cursor-pointer transition-all duration-300 mt-4 hover:bg-green-dark active:translate-y-0.5"
+            disabled={loading}
+            className="bg-primary text-white border-none rounded-lg py-3.5 text-base font-semibold cursor-pointer transition-all duration-300 mt-4 hover:bg-green-dark active:translate-y-0.5 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            Login
+            {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
 
@@ -107,7 +192,12 @@ const Login = () => {
 
         {/* Social */}
         <div className="flex gap-4 mb-6">
-          <button className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border border-gray-300 bg-white font-medium cursor-pointer transition-colors duration-300 hover:bg-gray-100">
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg border border-gray-300 bg-white font-medium cursor-pointer transition-colors duration-300 hover:bg-gray-100 disabled:bg-gray-100 disabled:cursor-not-allowed"
+          >
             <FaGoogle /> Google
           </button>
         </div>
